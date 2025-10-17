@@ -15,19 +15,13 @@ MonoBehaviour:
   kitName: Spearmen Battalion
   heads:
   - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
-  - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
-  - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
-  - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
-  - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
+  - {fileID: 11400000, guid: b5a679518b52b3a4599d98c52bdab8a7, type: 2}
+  - {fileID: 11400000, guid: eb82c4e672807474aac496917667f758, type: 2}
   bodies:
   - {fileID: 11400000, guid: 485522156e913ec4a9073d4b4d4b2a4a, type: 2}
-  - {fileID: 11400000, guid: 485522156e913ec4a9073d4b4d4b2a4a, type: 2}
-  - {fileID: 11400000, guid: 485522156e913ec4a9073d4b4d4b2a4a, type: 2}
-  - {fileID: 11400000, guid: 485522156e913ec4a9073d4b4d4b2a4a, type: 2}
-  - {fileID: 11400000, guid: 485522156e913ec4a9073d4b4d4b2a4a, type: 2}
+  - {fileID: 11400000, guid: cd360a167edfd554f9994bd7acf4070c, type: 2}
+  - {fileID: 11400000, guid: 33478ea6f92194e4c8d719daa9d6bce0, type: 2}
   weapons:
   - {fileID: 11400000, guid: 0f18fcd002150fc42b8530b67b03ec93, type: 2}
-  - {fileID: 11400000, guid: 0f18fcd002150fc42b8530b67b03ec93, type: 2}
-  - {fileID: 11400000, guid: 0f18fcd002150fc42b8530b67b03ec93, type: 2}
-  - {fileID: 11400000, guid: 0f18fcd002150fc42b8530b67b03ec93, type: 2}
-  - {fileID: 11400000, guid: 0f18fcd002150fc42b8530b67b03ec93, type: 2}
+  - {fileID: 11400000, guid: 0e8b6f5b2a5aca941b3fa906caafe8ce, type: 2}
+  - {fileID: 11400000, guid: cb225dd252240084e83f6f03297639e4, type: 2}
