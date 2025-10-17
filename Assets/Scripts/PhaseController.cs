@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -13,6 +14,10 @@ public class PhaseController : MonoBehaviour
     public Button backBtn, nextBtn, saveBtn;
     public TMP_Text phaseText, logText;
 
+    // Broadcast when a SNIP selection changes so UI can highlight the chosen button
+    public event Action<SlotType, PartSO> OnSnipSelectionChanged;
+
+    // Current SNIP selections
     Dictionary<SlotType, PartSO> chosen = new() {
         { SlotType.Head, null }, { SlotType.Body, null }, { SlotType.Weapon, null }
     };
@@ -20,26 +25,42 @@ public class PhaseController : MonoBehaviour
         { SlotType.Head, false }, { SlotType.Body, false }, { SlotType.Weapon, false }
     };
 
-    Phase phase = Phase.Snip;
+    public Phase phase { get; private set; } = Phase.Snip;
 
     void Start() { Enter(Phase.Snip); }
 
-    // --- UI hooks ---
+    public void ResetToSnip()
+    {
+        chosen[SlotType.Head] = null;
+        chosen[SlotType.Body] = null;
+        chosen[SlotType.Weapon] = null;
+        painted[SlotType.Head] = painted[SlotType.Body] = painted[SlotType.Weapon] = false;
+        Enter(Phase.Snip);
+        UpdateButtons();
+        // Notify UI to clear highlights
+        OnSnipSelectionChanged?.Invoke(SlotType.Head, null);
+        OnSnipSelectionChanged?.Invoke(SlotType.Body, null);
+        OnSnipSelectionChanged?.Invoke(SlotType.Weapon, null);
+    }
+
+    // -------- UI hooks ----------
     public void OnPartClicked(PartSO part)
     {
         if (phase == Phase.Snip)
         {
             chosen[part.slot] = part;
-            Log($"Snipped {part.slot}: {part.name}");
+            Log($"Snipped {part.slot}: {(!string.IsNullOrEmpty(part.displayName) ? part.displayName : part.name)}");
+            OnSnipSelectionChanged?.Invoke(part.slot, part);
             UpdateButtons();
         }
         else if (phase == Phase.Glue)
         {
             desk.EquipPart(part);
-            Log($"Glued {part.slot}: {part.name}");
+            Log($"Glued {part.slot}: {(!string.IsNullOrEmpty(part.displayName) ? part.displayName : part.name)}");
             UpdateButtons();
         }
     }
+
     public void OnColorPicked(Color c)
     {
         if (phase != Phase.Paint) return;
@@ -58,6 +79,7 @@ public class PhaseController : MonoBehaviour
         else if (phase == Phase.Glue) Enter(Phase.Paint);
         else if (phase == Phase.Paint) Enter(Phase.Complete);
     }
+
     public void Back()
     {
         if (phase == Phase.Glue) Enter(Phase.Snip);
@@ -67,14 +89,14 @@ public class PhaseController : MonoBehaviour
     void Enter(Phase p)
     {
         phase = p;
-        snipPanel.SetActive(p == Phase.Snip);
-        gluePanel.SetActive(p == Phase.Glue);
-        paintPanel.SetActive(p == Phase.Paint);
+        if (snipPanel) snipPanel.SetActive(p == Phase.Snip);
+        if (gluePanel) gluePanel.SetActive(p == Phase.Glue);
+        if (paintPanel) paintPanel.SetActive(p == Phase.Paint);
         if (phaseText) phaseText.text = $"Phase: {p}";
-        if (p == Phase.Snip) Log("Choose one Head, Body and Weapon to snip.");
-        if (p == Phase.Glue) Log("Glue your chosen parts. You can still swap.");
-        if (p == Phase.Paint) Log("Select a slot and apply paint.");
-        saveBtn.gameObject.SetActive(p == Phase.Complete);
+        if (p == Phase.Snip) Log("Choose one Head, Body, and Weapon.");
+        if (p == Phase.Glue) Log("Assemble/glue your chosen parts (swap if needed).");
+        if (p == Phase.Paint) Log("Pick a slot and apply paint.");
+        if (saveBtn) saveBtn.gameObject.SetActive(p == Phase.Complete);
         UpdateButtons();
     }
 
@@ -83,7 +105,7 @@ public class PhaseController : MonoBehaviour
         bool canNext = false;
         if (phase == Phase.Snip)
         {
-            canNext = chosen[SlotType.Head] && chosen[SlotType.Body] && chosen[SlotType.Weapon];
+            canNext = (chosen[SlotType.Head] && chosen[SlotType.Body] && chosen[SlotType.Weapon]);
         }
         else if (phase == Phase.Glue)
         {
@@ -93,13 +115,13 @@ public class PhaseController : MonoBehaviour
         {
             canNext = painted[SlotType.Head] || painted[SlotType.Body] || painted[SlotType.Weapon];
         }
-        nextBtn.interactable = canNext;
-        backBtn.interactable = (phase != Phase.Snip);
+        if (nextBtn) nextBtn.interactable = canNext;
+        if (backBtn) backBtn.interactable = (phase != Phase.Snip);
         if (phase == Phase.Complete)
         {
             if (phaseText) phaseText.text = "Phase: Complete";
-            nextBtn.interactable = false;
-            backBtn.interactable = true;
+            if (nextBtn) nextBtn.interactable = false;
+            if (backBtn) backBtn.interactable = true;
         }
     }
 
@@ -108,4 +130,7 @@ public class PhaseController : MonoBehaviour
         if (!logText) return;
         logText.text += (logText.text.Length > 0 ? "\n" : "") + "• " + msg;
     }
+
+    // Expose current SNIP choice (handy for UI)
+    public PartSO GetChosen(SlotType slot) => chosen[slot];
 }
