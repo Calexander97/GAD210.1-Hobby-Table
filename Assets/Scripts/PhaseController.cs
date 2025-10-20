@@ -43,12 +43,15 @@ public class PhaseController : MonoBehaviour
         OnSnipSelectionChanged?.Invoke(SlotType.Weapon, null);
     }
 
+
+
     // -------- UI hooks ----------
     public void OnPartClicked(PartSO part)
     {
         if (phase == Phase.Snip)
         {
             chosen[part.slot] = part;
+            desk?.EquipPart(part); // quick preview on the rig
             Log($"Snipped {part.slot}: {(!string.IsNullOrEmpty(part.displayName) ? part.displayName : part.name)}");
             OnSnipSelectionChanged?.Invoke(part.slot, part);
             UpdateButtons();
@@ -103,20 +106,31 @@ public class PhaseController : MonoBehaviour
     void UpdateButtons()
     {
         bool canNext = false;
+
         if (phase == Phase.Snip)
         {
-            canNext = (chosen[SlotType.Head] && chosen[SlotType.Body] && chosen[SlotType.Weapon]);
+            bool hasH = chosen.TryGetValue(SlotType.Head, out var h) && h != null;
+            bool hasB = chosen.TryGetValue(SlotType.Body, out var b) && b != null;
+            bool hasW = chosen.TryGetValue(SlotType.Weapon, out var w) && w != null;
+
+            // DEBUG: see what’s missing
+            // (comment these out once it works)
+            Debug.Log($"[SNIP] hasH:{hasH} hasB:{hasB} hasW:{hasW}");
+
+            canNext = hasH && hasB && hasW;
         }
         else if (phase == Phase.Glue)
         {
-            canNext = desk.HasAllPartsEquipped();
+            canNext = desk != null && desk.HasAllPartsEquipped();
         }
         else if (phase == Phase.Paint)
         {
             canNext = painted[SlotType.Head] || painted[SlotType.Body] || painted[SlotType.Weapon];
         }
+
         if (nextBtn) nextBtn.interactable = canNext;
         if (backBtn) backBtn.interactable = (phase != Phase.Snip);
+
         if (phase == Phase.Complete)
         {
             if (phaseText) phaseText.text = "Phase: Complete";

@@ -1,5 +1,4 @@
 using UnityEngine;
-using UnityEngine.UI;
 using System.Collections.Generic;
 
 public class SnipPanelSpawner : MonoBehaviour
@@ -8,76 +7,94 @@ public class SnipPanelSpawner : MonoBehaviour
     public KitSO activeKit;
     public PhaseController phase;
 
-    [Header("UI Parents (rows)")]
+    [Header("UI Parents (rows = the Content objects)")]
     public Transform headRow;
     public Transform bodyRow;
     public Transform weaponRow;
 
     [Header("Prefabs")]
-    public GameObject partButtonPrefab;   // must have PartButtonPhase + Text/Icon components
+    public GameObject partButtonPrefab;
 
-    // Keep track so we can update highlight states
     Dictionary<SlotType, List<PartButtonPhase>> buttonsBySlot = new(){
-        {SlotType.Head, new List<PartButtonPhase>()},
-        {SlotType.Body, new List<PartButtonPhase>()},
+        {SlotType.Head,   new List<PartButtonPhase>()},
+        {SlotType.Body,   new List<PartButtonPhase>()},
         {SlotType.Weapon, new List<PartButtonPhase>()}
     };
 
-    void OnEnable()
+    void Start()
     {
-        if (phase) phase.OnSnipSelectionChanged += HandleSelectionChanged;
+        // Auto-spawn on scene load if a kit is assigned
+        if (activeKit != null) RefreshFromKit(activeKit);
+        else Debug.LogWarning("[SnipPanelSpawner] No activeKit set; nothing to spawn.");
     }
-    void OnDisable()
-    {
-        if (phase) phase.OnSnipSelectionChanged -= HandleSelectionChanged;
-    }
+
+    void OnEnable() { if (phase) phase.OnSnipSelectionChanged += HandleSelectionChanged; }
+    void OnDisable() { if (phase) phase.OnSnipSelectionChanged -= HandleSelectionChanged; }
 
     public void RefreshFromKit(KitSO kit)
     {
+        if (kit == null) { Debug.LogError("[SnipPanelSpawner] RefreshFromKit NULL kit"); return; }
+        if (phase == null) { Debug.LogError("[SnipPanelSpawner] PhaseController is NULL"); }
+        if (headRow == null || bodyRow == null || weaponRow == null)
+        {
+            Debug.LogError("[SnipPanelSpawner] One or more row Transforms are NULL"); return;
+        }
+        if (partButtonPrefab == null)
+        {
+            Debug.LogError("[SnipPanelSpawner] partButtonPrefab is NULL"); return;
+        }
+
         activeKit = kit;
+        phase?.ResetToSnip();
         ClearAll();
+
+        Debug.Log($"[SnipPanelSpawner] Spawning: H:{kit.heads?.Count} B:{kit.bodies?.Count} W:{kit.weapons?.Count}");
+
         SpawnRow(kit.heads, headRow, SlotType.Head);
         SpawnRow(kit.bodies, bodyRow, SlotType.Body);
         SpawnRow(kit.weapons, weaponRow, SlotType.Weapon);
-        // Reset phase so Next is gated correctly
-        if (phase) phase.ResetToSnip();
     }
 
     void SpawnRow(List<PartSO> parts, Transform row, SlotType slot)
     {
-        var list = buttonsBySlot[slot];
-        list.Clear();
+        buttonsBySlot[slot].Clear();
 
-        // cap at 3 to match your layout
+        if (parts == null) { Debug.LogWarning($"[SnipPanelSpawner] {slot} list is NULL"); return; }
+
         int count = Mathf.Min(parts.Count, 3);
         for (int i = 0; i < count; i++)
         {
-            var go = Instantiate(partButtonPrefab, row);
-            var pb = go.GetComponent<PartButtonPhase>();
-            pb.Init(parts[i], phase, slot);
-            list.Add(pb);
-        }
+            var p = parts[i];
+            if (p == null) { Debug.LogWarning($"[SnipPanelSpawner] NULL PartSO in {slot} @ {i}"); continue; }
 
-        // If your row already has 3 placeholders, you can hide extra children or leave gaps.
+            var go = Instantiate(partButtonPrefab);
+            go.transform.SetParent(row, false); // keep rect scale/anchors
+            var pb = go.GetComponent<PartButtonPhase>();
+            if (pb == null) { Debug.LogError("[SnipPanelSpawner] partButtonPrefab missing PartButtonPhase"); Destroy(go); continue; }
+
+            pb.Init(p, phase, slot);
+            buttonsBySlot[slot].Add(pb);
+        }
     }
 
     void HandleSelectionChanged(SlotType slot, PartSO selected)
     {
-        var list = buttonsBySlot[slot];
-        foreach (var pb in list)
-        {
-            pb.SetSelected(pb.part == selected);
-        }
+        foreach (var pb in buttonsBySlot[slot]) pb.SetSelected(pb.part == selected);
     }
 
     void ClearAll()
     {
-        // Destroys all children in the rows (safe if these rows are dedicated)
-        foreach (Transform c in headRow) Destroy(c.gameObject);
-        foreach (Transform c in bodyRow) Destroy(c.gameObject);
-        foreach (Transform c in weaponRow) Destroy(c.gameObject);
+        ClearRow(headRow); ClearRow(bodyRow); ClearRow(weaponRow);
         buttonsBySlot[SlotType.Head].Clear();
         buttonsBySlot[SlotType.Body].Clear();
         buttonsBySlot[SlotType.Weapon].Clear();
+    }
+    void ClearRow(Transform row)
+    {
+        for (int i = row.childCount - 1; i >= 0; i--)
+        {
+            var child = row.GetChild(i);
+            if (child.GetComponent<PartButtonPhase>() != null) Destroy(child.gameObject);
+        }
     }
 }

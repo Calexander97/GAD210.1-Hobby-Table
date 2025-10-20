@@ -10,4 +10,6 @@ public class PartSO : ScriptableObject
     public Sprite icon;               // optional
     public SlotType slot;
     public GameObject prefab;
+
+
 }
