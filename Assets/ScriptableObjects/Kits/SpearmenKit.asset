@@ -13,6 +13,7 @@ MonoBehaviour:
   m_Name: SpearmenKit
   m_EditorClassIdentifier: 
   kitName: Spearmen Battalion
+  unitCount: 10
   heads:
   - {fileID: 11400000, guid: cfd1eca97052f284da71c06d9be0d239, type: 2}
   - {fileID: 11400000, guid: b5a679518b52b3a4599d98c52bdab8a7, type: 2}

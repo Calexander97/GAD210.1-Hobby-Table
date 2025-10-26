@@ -13,6 +13,7 @@ MonoBehaviour:
   m_Name: Knight Kit
   m_EditorClassIdentifier: 
   kitName: Knight Battalion
+  unitCount: 3
   heads:
   - {fileID: 11400000, guid: aca36ce6787c7584688117deb1f0f010, type: 2}
   - {fileID: 11400000, guid: f9844368b8e6a3248a38c62f9a7cb1f8, type: 2}

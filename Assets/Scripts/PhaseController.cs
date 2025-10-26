@@ -8,58 +8,92 @@ public class PhaseController : MonoBehaviour
 {
     public enum Phase { Snip, Glue, Paint, Complete }
 
-    [Header("Refs")]
+    [Header("Core")]
     public HobbyDeskController desk;
+    public SnipPanelSpawner snipSpawner;
     public GameObject snipPanel, gluePanel, paintPanel;
     public Button backBtn, nextBtn, saveBtn;
     public TMP_Text phaseText, logText;
 
-    // Broadcast when a SNIP selection changes so UI can highlight the chosen button
-    public event Action<SlotType, PartSO> OnSnipSelectionChanged;
+    [Header("Glue UI (optional)")]
+    public TMP_Text currentHeadOption;
+    public TMP_Text currentBodyOption;
+    public TMP_Text currentWeaponOption;
+    public TMP_Text assembleProgressText;
+    public Button assembleBtn;
 
-    // Current SNIP selections
-    Dictionary<SlotType, PartSO> chosen = new() {
-        { SlotType.Head, null }, { SlotType.Body, null }, { SlotType.Weapon, null }
-    };
-    Dictionary<SlotType, bool> painted = new() {
-        { SlotType.Head, false }, { SlotType.Body, false }, { SlotType.Weapon, false }
-    };
+    [Header("SNIP Need UI")]
+    public TMP_Text headNeedText;
+    public TMP_Text bodyNeedText;
+    public TMP_Text weaponNeedText;
 
+    // runtime
+    public KitSO activeKit { get; private set; }
+    int targetCount = 0;
     public Phase phase { get; private set; } = Phase.Snip;
 
-    void Start() { Enter(Phase.Snip); }
+    // collected parts in SNIP
+    readonly List<PartSO> _snipHeads = new();
+    readonly List<PartSO> _snipBodies = new();
+    readonly List<PartSO> _snipWeapons = new();
 
-    public void ResetToSnip()
+    bool paintedAny = false;
+
+    // optional: UI can listen for highlight updates
+    public event Action<SlotType, PartSO> OnSnipSelectionChanged;
+
+    void Start()
     {
-        chosen[SlotType.Head] = null;
-        chosen[SlotType.Body] = null;
-        chosen[SlotType.Weapon] = null;
-        painted[SlotType.Head] = painted[SlotType.Body] = painted[SlotType.Weapon] = false;
         Enter(Phase.Snip);
         UpdateButtons();
-        // Notify UI to clear highlights
+    }
+
+    // called by KitSelector / SnipPanelSpawner
+    public void SetActiveKit(KitSO kit)
+    {
+        activeKit = kit;
+        targetCount = Mathf.Max(1, kit ? kit.unitCount : 1);
+        ResetToSnip();                 // ensure lists/labels reset
+        Log($"Kit set: {kit?.kitName} (need {targetCount} of each).");
+    }
+
+    // PUBLIC so old callers compile
+    public void ResetToSnip()
+    {
+        _snipHeads.Clear();
+        _snipBodies.Clear();
+        _snipWeapons.Clear();
+        paintedAny = false;
+        Enter(Phase.Snip);
+        UpdateNeedUI();
+        UpdateButtons();
+        // clear any highlights
         OnSnipSelectionChanged?.Invoke(SlotType.Head, null);
         OnSnipSelectionChanged?.Invoke(SlotType.Body, null);
         OnSnipSelectionChanged?.Invoke(SlotType.Weapon, null);
     }
 
-
-
-    // -------- UI hooks ----------
+    // ---- UI hooks ----
+    // SNIP: each click ADDS one part up to targetCount
     public void OnPartClicked(PartSO part)
     {
+        if (phase != Phase.Snip && phase != Phase.Glue) return;
+
         if (phase == Phase.Snip)
         {
-            chosen[part.slot] = part;
-            desk?.EquipPart(part); // quick preview on the rig
-            Log($"Snipped {part.slot}: {(!string.IsNullOrEmpty(part.displayName) ? part.displayName : part.name)}");
-            OnSnipSelectionChanged?.Invoke(part.slot, part);
+            var list = GetSnipList(part.slot);
+            if (list.Count >= targetCount) { Log($"Already have {targetCount} {part.slot}s."); return; }
+            list.Add(part);
+            desk?.EquipPart(part); // quick preview
+            UpdateNeedUI();
             UpdateButtons();
+            OnSnipSelectionChanged?.Invoke(part.slot, part);
+            return;
         }
-        else if (phase == Phase.Glue)
+
+        if (phase == Phase.Glue)
         {
-            desk.EquipPart(part);
-            Log($"Glued {part.slot}: {(!string.IsNullOrEmpty(part.displayName) ? part.displayName : part.name)}");
+            desk?.EquipPart(part);
             UpdateButtons();
         }
     }
@@ -67,18 +101,14 @@ public class PhaseController : MonoBehaviour
     public void OnColorPicked(Color c)
     {
         if (phase != Phase.Paint) return;
-        desk.SetColor(c);
-        painted[desk.GetCurrentSlot()] = true;
+        desk?.SetColor(c);
+        paintedAny = true;
         UpdateButtons();
     }
 
     public void Next()
     {
-        if (phase == Phase.Snip)
-        {
-            Enter(Phase.Glue);
-            foreach (var kv in chosen) if (kv.Value != null) desk.EquipPart(kv.Value);
-        }
+        if (phase == Phase.Snip) Enter(Phase.Glue);
         else if (phase == Phase.Glue) Enter(Phase.Paint);
         else if (phase == Phase.Paint) Enter(Phase.Complete);
     }
@@ -96,10 +126,6 @@ public class PhaseController : MonoBehaviour
         if (gluePanel) gluePanel.SetActive(p == Phase.Glue);
         if (paintPanel) paintPanel.SetActive(p == Phase.Paint);
         if (phaseText) phaseText.text = $"Phase: {p}";
-        if (p == Phase.Snip) Log("Choose one Head, Body, and Weapon.");
-        if (p == Phase.Glue) Log("Assemble/glue your chosen parts (swap if needed).");
-        if (p == Phase.Paint) Log("Pick a slot and apply paint.");
-        if (saveBtn) saveBtn.gameObject.SetActive(p == Phase.Complete);
         UpdateButtons();
     }
 
@@ -109,15 +135,10 @@ public class PhaseController : MonoBehaviour
 
         if (phase == Phase.Snip)
         {
-            bool hasH = chosen.TryGetValue(SlotType.Head, out var h) && h != null;
-            bool hasB = chosen.TryGetValue(SlotType.Body, out var b) && b != null;
-            bool hasW = chosen.TryGetValue(SlotType.Weapon, out var w) && w != null;
-
-            // DEBUG: see what’s missing
-            // (comment these out once it works)
-            Debug.Log($"[SNIP] hasH:{hasH} hasB:{hasB} hasW:{hasW}");
-
-            canNext = hasH && hasB && hasW;
+            canNext =
+                _snipHeads.Count >= targetCount &&
+                _snipBodies.Count >= targetCount &&
+                _snipWeapons.Count >= targetCount;
         }
         else if (phase == Phase.Glue)
         {
@@ -125,7 +146,7 @@ public class PhaseController : MonoBehaviour
         }
         else if (phase == Phase.Paint)
         {
-            canNext = painted[SlotType.Head] || painted[SlotType.Body] || painted[SlotType.Weapon];
+            canNext = paintedAny;
         }
 
         if (nextBtn) nextBtn.interactable = canNext;
@@ -139,12 +160,29 @@ public class PhaseController : MonoBehaviour
         }
     }
 
+    void UpdateNeedUI()
+    {
+        if (!activeKit) return;
+        if (headNeedText) headNeedText.text = $"Head {_snipHeads.Count}/{targetCount}";
+        if (bodyNeedText) bodyNeedText.text = $"Body {_snipBodies.Count}/{targetCount}";
+        if (weaponNeedText) weaponNeedText.text = $"Weapon {_snipWeapons.Count}/{targetCount}";
+    }
+
+    List<PartSO> GetSnipList(SlotType slot) => slot switch
+    {
+        SlotType.Head => _snipHeads,
+        SlotType.Body => _snipBodies,
+        SlotType.Weapon => _snipWeapons,
+        _ => _snipBodies
+    };
+
     void Log(string msg)
     {
         if (!logText) return;
         logText.text += (logText.text.Length > 0 ? "\n" : "") + "• " + msg;
     }
 
-    // Expose current SNIP choice (handy for UI)
-    public PartSO GetChosen(SlotType slot) => chosen[slot];
+    // read-only accessors (for other systems if needed)
+    public int GetSnipCount(SlotType slot) => GetSnipList(slot).Count;
+    public int GetTargetCount() => targetCount;
 }
