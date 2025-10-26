@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -67,24 +68,22 @@ public class HobbyDeskController : MonoBehaviour
     // --------- ORBIT (camera only; units never rotate) ----------
     void HandleOrbit()
     {
-        if (!orbitPivot || !cam) return;
+        if (!paintCamera || !orbitPivot) return;
 
         if (Input.GetMouseButton(1))
         {
             float dx = Input.GetAxis("Mouse X");
-            float dy = Input.GetAxis("Mouse Y");
-            cam.transform.RotateAround(orbitPivot.position, Vector3.up, dx * orbitSpeed * Time.deltaTime);
-            cam.transform.RotateAround(orbitPivot.position, cam.transform.right, -dy * orbitSpeed * Time.deltaTime);
+            orbitPivot.Rotate(Vector3.up, dx * orbitSpeed * Time.deltaTime, Space.World);
         }
 
         float scroll = Input.GetAxis("Mouse ScrollWheel");
         if (Mathf.Abs(scroll) > 0.001f)
         {
-            Vector3 dir = (cam.transform.position - orbitPivot.position).normalized;
-            float dist = Vector3.Distance(cam.transform.position, orbitPivot.position);
-            float target = Mathf.Clamp(dist - scroll * zoomSpeed, minDist, maxDist);
-            cam.transform.position = orbitPivot.position + dir * target;
-            cam.transform.LookAt(orbitPivot.position);
+            var dir = (paintCamera.transform.position - orbitPivot.position).normalized;
+            var newPos = paintCamera.transform.position + (-dir * (scroll * zoomSpeed));
+            float dist = Vector3.Distance(newPos, orbitPivot.position);
+            if (dist > minDist && dist < maxDist) paintCamera.transform.position = newPos;
+            paintCamera.transform.LookAt(orbitPivot.position);
         }
     }
 
@@ -309,5 +308,52 @@ public class HobbyDeskController : MonoBehaviour
         paintIndex = (paintIndex + delta + units.Count) % units.Count;
         return paintIndex;
     }
+
+    public void FocusPaintOn(int index, bool instant = false)
+    {
+        if (units == null || units.Count == 0) return;
+        paintIndex = Mathf.Clamp(index, 0, units.Count - 1);
+        if (!orbitPivot || !paintCamera) return;
+
+        var u = units[paintIndex];
+        Vector3 center = GetUnitCenter(u);
+        if (instant)
+        {
+            orbitPivot.position = center;
+        }
+        else
+        {
+            StopAllCoroutines();
+            StartCoroutine(SmoothFocus(center));
+        }
+    }
+
+    Vector3 GetUnitCenter(UnitInstance u)
+    {
+        // fallback if no renderers
+        var renderers = u.unitRoot.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0) return u.unitRoot.position;
+
+        Bounds b = new Bounds(renderers[0].bounds.center, Vector3.zero);
+        for (int i = 1; i < renderers.Length; i++) b.Encapsulate(renderers[i].bounds);
+        return b.center;
+    }
+
+    IEnumerator SmoothFocus(Vector3 target)
+    {
+        Vector3 start = orbitPivot.position;
+        float t = 0f;
+        const float speed = 4f;
+        while (t < 1f)
+        {
+            t += Time.deltaTime * speed;
+            orbitPivot.position = Vector3.Lerp(start, target, t);
+            yield return null;
+        }
+    }
+
+    // Make sure your orbit uses orbitPivot (not an old target)
+    
+
 
 }

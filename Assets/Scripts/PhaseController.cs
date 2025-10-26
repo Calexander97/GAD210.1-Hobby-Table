@@ -100,22 +100,33 @@ public class PhaseController : MonoBehaviour
     // ---------- NAV ----------
     public void Next()
     {
-        if (phase == Phase.Snip) Enter(Phase.Glue);
-        else if (phase == Phase.Glue) Enter(Phase.Paint);
-        else if (phase == Phase.Paint)
+        if (phase == Phase.Snip) { Enter(Phase.Glue); return; }
+        if (phase == Phase.Glue) { Enter(Phase.Paint); return; }
+
+        if (phase == Phase.Paint)
         {
-            // In paint phase, NEXT steps through units; when done -> Complete
-            if (desk.units.Count == 0) { Enter(Phase.Complete); return; }
-            int i = desk.paintIndex + 1;
-            if (i < desk.units.Count) desk.SelectPaintIndex(i);
-            else Enter(Phase.Complete);
-            UpdateButtons();
+            // advance through units; only Complete after last
+            if (desk.units != null && desk.units.Count > 0 && desk.paintIndex < desk.units.Count - 1)
+            {
+                desk.FocusPaintOn(desk.paintIndex + 1, instant: false);
+                return;
+            }
+            SetPhaseHeader();
+            Enter(Phase.Complete);
+            return;
         }
     }
     public void Back()
     {
-        if (phase == Phase.Glue) Enter(Phase.Snip);
-        else if (phase == Phase.Paint) Enter(Phase.Glue);
+        if (phase == Phase.Complete)
+        {
+            ResetToSnip();           // clears counts/highlights and shows Snip
+            return;
+        }
+        if (phase == Phase.Glue) { Enter(Phase.Snip); return; }
+        if (phase == Phase.Paint) { Enter(Phase.Glue); return; }
+
+        SetPhaseHeader();
     }
 
     void Enter(Phase p)
@@ -128,9 +139,9 @@ public class PhaseController : MonoBehaviour
         if (p == Phase.Paint)
         {
             // first unit
-            desk.FocusPaintUnit(0, paintOrbitPivot);
-            if (paintCamOrbit) paintCamOrbit.pivot = paintOrbitPivot;
+            desk.FocusPaintOn(0, instant: true);
         }
+        SetPhaseHeader();
         UpdateButtons();
     }
 
@@ -274,4 +285,11 @@ public class PhaseController : MonoBehaviour
         if (!logText) return;
         logText.text += (logText.text.Length > 0 ? "\n" : "") + "• " + msg;
     }
+
+    // --- header helper ---
+    void SetPhaseHeader()
+    {
+        if (phaseText) phaseText.text = $"Phase: {phase}";
+    }
+
 }
