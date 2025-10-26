@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -10,7 +11,6 @@ public class PhaseController : MonoBehaviour
 
     [Header("Core")]
     public HobbyDeskController desk;
-    public SnipPanelSpawner snipSpawner;
     public GameObject snipPanel, gluePanel, paintPanel;
     public Button backBtn, nextBtn, saveBtn;
     public TMP_Text phaseText, logText;
@@ -27,74 +27,97 @@ public class PhaseController : MonoBehaviour
     public TMP_Text bodyNeedText;
     public TMP_Text weaponNeedText;
 
-    // runtime
     public KitSO activeKit { get; private set; }
     public Phase phase { get; private set; } = Phase.Snip;
-    int targetCount = 0;
 
-    // ---- Bucketed SNIP data (part + remaining count) ----
+    // ----- SNIP data (counts per option) -----
     [Serializable]
-    public class SnipEntry
-    {
-        public PartSO part;
-        public int remaining;
-        public SnipEntry(PartSO p, int count = 0) { part = p; remaining = count; }
-    }
+    public class SnipEntry { public PartSO part; public int remaining; public SnipEntry(PartSO p) { part = p; remaining = 1; } }
 
-    readonly List<SnipEntry> _heads = new();
-    readonly List<SnipEntry> _bodies = new();
-    readonly List<SnipEntry> _weapons = new();
+    readonly List<SnipEntry> snipHeads = new();
+    readonly List<SnipEntry> snipBodies = new();
+    readonly List<SnipEntry> snipWeapons = new();
 
-    // GLUE state
-    int headIndex = 0, bodyIndex = 0, weaponIndex = 0;
+    int targetCount = 0;         // 10 for Spearmen, 3 for Knights (from KitSO.unitCount)
     int assembledCount = 0;
 
-    // PAINT gate
+    // GLUE indices into the snip lists
+    int headIndex = 0, bodyIndex = 0, weaponIndex = 0;
+
+    // Paint phase
     bool paintedAny = false;
 
-    // Optional highlight event (unchanged)
-    public event Action<SlotType, PartSO> OnSnipSelectionChanged;
+    void Start() { Enter(Phase.Snip); UpdateButtons(); }
 
-    void Start()
-    {
-        Enter(Phase.Snip);
-        UpdateButtons();
-    }
-
-    // ---------------- Kit / Phase control ----------------
-
-    // Called by KitSelector / SnipPanelSpawner
     public void SetActiveKit(KitSO kit)
     {
         activeKit = kit;
         targetCount = Mathf.Max(1, kit ? kit.unitCount : 1);
-
         ResetToSnip();
-        assembledCount = 0;
-        headIndex = bodyIndex = weaponIndex = 0;
-
         Log($"Kit set: {kit?.kitName} (need {targetCount} of each).");
-        UpdateAssembleUI();
     }
 
     public void ResetToSnip()
     {
-        _heads.Clear(); _bodies.Clear(); _weapons.Clear();
+        snipHeads.Clear(); snipBodies.Clear(); snipWeapons.Clear();
+        assembledCount = 0; headIndex = bodyIndex = weaponIndex = 0;
         paintedAny = false;
         Enter(Phase.Snip);
         UpdateNeedUI();
         UpdateButtons();
+    }
 
-        // clear any button highlights
-        OnSnipSelectionChanged?.Invoke(SlotType.Head, null);
-        OnSnipSelectionChanged?.Invoke(SlotType.Body, null);
-        OnSnipSelectionChanged?.Invoke(SlotType.Weapon, null);
+    // ---------- SNIP ----------
+    public void OnPartClicked(PartSO part)
+    {
+        if (phase != Phase.Snip && phase != Phase.Glue) return;
+
+        if (phase == Phase.Snip)
+        {
+            var list = GetList(part.slot);
+            int total = TotalCount(list);
+            if (total >= targetCount) { Log($"Already snipped {targetCount} {part.slot}(s)."); return; }
+
+            var e = list.FirstOrDefault(x => x.part == part);
+            if (e != null) e.remaining++;
+            else list.Add(new SnipEntry(part));
+
+            UpdateNeedUI();
+            UpdateButtons();
+            return;
+        }
+
+        if (phase == Phase.Glue)
+        {
+            // optional: preview on desk’s preview anchors (not required)
+            desk.EquipPart(part);
+        }
+    }
+
+    // ---------- NAV ----------
+    public void Next()
+    {
+        if (phase == Phase.Snip) Enter(Phase.Glue);
+        else if (phase == Phase.Glue) Enter(Phase.Paint);
+        else if (phase == Phase.Paint)
+        {
+            // In paint phase, NEXT steps through units; when done -> Complete
+            if (desk.units.Count == 0) { Enter(Phase.Complete); return; }
+            int i = desk.paintIndex + 1;
+            if (i < desk.units.Count) desk.SelectPaintIndex(i);
+            else Enter(Phase.Complete);
+            UpdateButtons();
+        }
+    }
+    public void Back()
+    {
+        if (phase == Phase.Glue) Enter(Phase.Snip);
+        else if (phase == Phase.Paint) Enter(Phase.Glue);
     }
 
     void Enter(Phase p)
     {
         phase = p;
-
         if (snipPanel) snipPanel.SetActive(p == Phase.Snip);
         if (gluePanel) gluePanel.SetActive(p == Phase.Glue);
         if (paintPanel) paintPanel.SetActive(p == Phase.Paint);
@@ -103,119 +126,19 @@ public class PhaseController : MonoBehaviour
         if (p == Phase.Glue)
         {
             // clamp indices to lists
-            headIndex = Mathf.Clamp(headIndex, 0, Mathf.Max(0, _heads.Count - 1));
-            bodyIndex = Mathf.Clamp(bodyIndex, 0, Mathf.Max(0, _bodies.Count - 1));
-            weaponIndex = Mathf.Clamp(weaponIndex, 0, Mathf.Max(0, _weapons.Count - 1));
+            ClampGlueIndices();
+            assembledCount = 0;
             UpdateGlueLabels();
             UpdateAssembleUI();
         }
+        else if (p == Phase.Paint)
+        {
+            paintedAny = false;
+            if (desk.units.Count > 0) desk.SelectPaintIndex(0);
+        }
 
         UpdateButtons();
     }
-
-    // ---------------- SNIP / GLUE interactions ----------------
-
-    // SNIP click: add 1 to the chosen part’s bucket (capped by target)
-    public void OnPartClicked(PartSO part)
-    {
-        if (phase != Phase.Snip && phase != Phase.Glue) return;
-
-        if (phase == Phase.Snip)
-        {
-            var list = GetBuckets(part.slot);
-            if (TotalPicked(list) >= targetCount) { Log($"Already have {targetCount} {part.slot}s."); return; }
-
-            var entry = EnsureBucket(list, part);
-            entry.remaining += 1;
-
-            desk?.EquipPart(part);                // quick preview
-            UpdateNeedUI();
-            UpdateButtons();
-            OnSnipSelectionChanged?.Invoke(part.slot, part);
-            return;
-        }
-
-        if (phase == Phase.Glue)
-        {
-            // optional: preview swap
-            desk?.EquipPart(part);
-            UpdateButtons();
-        }
-    }
-
-    // Cycle left/right through available entries (skips x0 where possible)
-    public void CycleHead(int dir) => CycleBucket(_heads, ref headIndex, dir);
-    public void CycleBody(int dir) => CycleBucket(_bodies, ref bodyIndex, dir);
-    public void CycleWeapon(int dir) => CycleBucket(_weapons, ref weaponIndex, dir);
-
-    void CycleBucket(List<SnipEntry> list, ref int idx, int dir)
-    {
-        if (list.Count == 0) return;
-        int start = idx;
-        for (int i = 0; i < list.Count; i++)
-        {
-            idx = (idx + dir + list.Count) % list.Count;
-            if (list[idx].remaining > 0) break; // land on something available
-        }
-        UpdateGlueLabels();
-    }
-
-    // Assemble one full unit if all three selected entries have stock
-    public void OnAssembleClicked()
-    {
-        if (phase != Phase.Glue || activeKit == null) return;
-        if (_heads.Count == 0 || _bodies.Count == 0 || _weapons.Count == 0) return;
-
-        var h = _heads[Mathf.Clamp(headIndex, 0, _heads.Count - 1)];
-        var b = _bodies[Mathf.Clamp(bodyIndex, 0, _bodies.Count - 1)];
-        var w = _weapons[Mathf.Clamp(weaponIndex, 0, _weapons.Count - 1)];
-
-        if (h.remaining <= 0 || b.remaining <= 0 || w.remaining <= 0)
-        {
-            Log("Not enough parts left for this combo.");
-            return;
-        }
-
-        // consume 1 of each part
-        h.remaining--; b.remaining--; w.remaining--;
-        assembledCount = Mathf.Clamp(assembledCount + 1, 0, targetCount);
-
-        // quality-of-life: auto-move off empty entries
-        if (h.remaining == 0) CycleHead(+1);
-        if (b.remaining == 0) CycleBody(+1);
-        if (w.remaining == 0) CycleWeapon(+1);
-
-        UpdateGlueLabels();
-        UpdateAssembleUI();
-        UpdateButtons();
-    }
-
-    // ---------------- PAINT ----------------
-
-    public void OnColorPicked(Color c)
-    {
-        if (phase != Phase.Paint) return;
-        desk?.SetColor(c);
-        paintedAny = true;
-        UpdateButtons();
-    }
-
-    // ---------------- Nav ----------------
-
-    public void Next()
-    {
-        if (phase == Phase.Snip) Enter(Phase.Glue);
-        else if (phase == Phase.Glue) Enter(Phase.Paint);
-        else if (phase == Phase.Paint) Enter(Phase.Complete);
-    }
-
-    public void Back()
-    {
-        if (phase == Phase.Glue) Enter(Phase.Snip);
-        else if (phase == Phase.Paint) Enter(Phase.Glue);
-    }
-
-    // ---------------- UI helpers ----------------
 
     void UpdateButtons()
     {
@@ -224,17 +147,18 @@ public class PhaseController : MonoBehaviour
         if (phase == Phase.Snip)
         {
             canNext =
-                TotalPicked(_heads) >= targetCount &&
-                TotalPicked(_bodies) >= targetCount &&
-                TotalPicked(_weapons) >= targetCount;
+                TotalCount(snipHeads) >= targetCount &&
+                TotalCount(snipBodies) >= targetCount &&
+                TotalCount(snipWeapons) >= targetCount;
         }
         else if (phase == Phase.Glue)
         {
-            canNext = (assembledCount >= targetCount && targetCount > 0);
+            canNext = (assembledCount >= targetCount);
         }
         else if (phase == Phase.Paint)
         {
-            canNext = paintedAny;
+            // Let NEXT always advance through units; Finish goes to Complete
+            canNext = true;
         }
 
         if (nextBtn) nextBtn.interactable = canNext;
@@ -248,76 +172,100 @@ public class PhaseController : MonoBehaviour
         }
     }
 
+    // ---------- SNIP helpers ----------
+    List<SnipEntry> GetList(SlotType slot) => slot switch
+    {
+        SlotType.Head => snipHeads,
+        SlotType.Body => snipBodies,
+        SlotType.Weapon => snipWeapons,
+        _ => snipBodies
+    };
+    static int TotalCount(List<SnipEntry> list) => list.Sum(e => e.remaining);
+
     void UpdateNeedUI()
     {
-        if (!activeKit) return;
-        if (headNeedText) headNeedText.text = $"Head {TotalPicked(_heads)}/{targetCount}";
-        if (bodyNeedText) bodyNeedText.text = $"Body {TotalPicked(_bodies)}/{targetCount}";
-        if (weaponNeedText) weaponNeedText.text = $"Weapon {TotalPicked(_weapons)}/{targetCount}";
+        if (headNeedText) headNeedText.text = $"Head  {TotalCount(snipHeads)}/{targetCount}";
+        if (bodyNeedText) bodyNeedText.text = $"Body  {TotalCount(snipBodies)}/{targetCount}";
+        if (weaponNeedText) weaponNeedText.text = $"Weapon {TotalCount(snipWeapons)}/{targetCount}";
     }
+
+    // ---------- GLUE ----------
+    void ClampGlueIndices()
+    {
+        if (snipHeads.Count > 0) headIndex = Mathf.Clamp(headIndex, 0, snipHeads.Count - 1);
+        if (snipBodies.Count > 0) bodyIndex = Mathf.Clamp(bodyIndex, 0, snipBodies.Count - 1);
+        if (snipWeapons.Count > 0) weaponIndex = Mathf.Clamp(weaponIndex, 0, snipWeapons.Count - 1);
+    }
+
+    public void CycleHead(int dir) { Cycle(ref headIndex, snipHeads, dir); UpdateGlueLabels(); }
+    public void CycleBody(int dir) { Cycle(ref bodyIndex, snipBodies, dir); UpdateGlueLabels(); }
+    public void CycleWeapon(int dir) { Cycle(ref weaponIndex, snipWeapons, dir); UpdateGlueLabels(); }
+
+
+    void Cycle(ref int idx, List<SnipEntry> list, int dir)
+    {
+        if (list == null || list.Count == 0) return;
+
+        // normalize to +1 or -1 so any non-zero value works
+        int step = dir >= 0 ? 1 : -1;
+
+        int tries = list.Count; // avoid infinite loop if all remaining == 0
+        do
+        {
+            idx = (idx + step + list.Count) % list.Count;
+        }
+        while (list[idx].remaining <= 0 && tries-- > 0);
+    }
+
 
     void UpdateGlueLabels()
     {
-        if (currentHeadOption && _heads.Count > 0)
-        {
-            var e = _heads[Mathf.Clamp(headIndex, 0, _heads.Count - 1)];
-            currentHeadOption.text = $"{NiceName(e.part)} (x{e.remaining})";
-            desk?.EquipPart(e.part);
-        }
-        if (currentBodyOption && _bodies.Count > 0)
-        {
-            var e = _bodies[Mathf.Clamp(bodyIndex, 0, _bodies.Count - 1)];
-            currentBodyOption.text = $"{NiceName(e.part)} (x{e.remaining})";
-            desk?.EquipPart(e.part);
-        }
-        if (currentWeaponOption && _weapons.Count > 0)
-        {
-            var e = _weapons[Mathf.Clamp(weaponIndex, 0, _weapons.Count - 1)];
-            currentWeaponOption.text = $"{NiceName(e.part)} (x{e.remaining})";
-            desk?.EquipPart(e.part);
-        }
+        if (currentHeadOption) currentHeadOption.text = snipHeads.Count > 0 ? Nice(snipHeads[headIndex]) : "-";
+        if (currentBodyOption) currentBodyOption.text = snipBodies.Count > 0 ? Nice(snipBodies[bodyIndex]) : "-";
+        if (currentWeaponOption) currentWeaponOption.text = snipWeapons.Count > 0 ? Nice(snipWeapons[weaponIndex]) : "-";
+    }
+    string Nice(SnipEntry e) => $"{(string.IsNullOrEmpty(e.part.displayName) ? e.part.name : e.part.displayName)}  x{e.remaining}";
+
+    public void OnAssembleClicked()
+    {
+        if (phase != Phase.Glue) return;
+        if (snipHeads.Count == 0 || snipBodies.Count == 0 || snipWeapons.Count == 0) return;
+        var h = snipHeads[headIndex];
+        var b = snipBodies[bodyIndex];
+        var w = snipWeapons[weaponIndex];
+        if (h.remaining <= 0 || b.remaining <= 0 || w.remaining <= 0) { Log("One of the selected parts is out of stock."); return; }
+
+        var slot = desk.GetFreeSlot();
+        if (!slot) { Log("No free slot on the desk."); return; }
+
+        var unit = desk.CreateEmptyUnitAt(slot);
+        desk.BuildUnit(unit, h.part, b.part, w.part);
+
+        h.remaining--; b.remaining--; w.remaining--;
+        assembledCount = Mathf.Clamp(assembledCount + 1, 0, targetCount);
+
+        UpdateGlueLabels();
         UpdateAssembleUI();
+        UpdateButtons();
     }
 
     void UpdateAssembleUI()
     {
-        if (assembleProgressText && activeKit)
-            assembleProgressText.text = $"Assembled: {assembledCount}/{targetCount}";
+        if (assembleProgressText) assembleProgressText.text = $"Assembled: {assembledCount}/{targetCount}";
     }
 
-    string NiceName(PartSO p) =>
-        string.IsNullOrEmpty(p.displayName) ? p.name : p.displayName;
+    // ---------- PAINT ----------
+    public void OnColorPicked(Color c)
+    {
+        if (phase != Phase.Paint) return;
+        desk.SetColor(c);
+        paintedAny = true;
+    }
 
+    // ---------- misc ----------
     void Log(string msg)
     {
         if (!logText) return;
         logText.text += (logText.text.Length > 0 ? "\n" : "") + "• " + msg;
     }
-
-    // ---------------- Buckets utils ----------------
-
-    List<SnipEntry> GetBuckets(SlotType slot) => slot switch
-    {
-        SlotType.Head => _heads,
-        SlotType.Body => _bodies,
-        SlotType.Weapon => _weapons,
-        _ => _bodies
-    };
-
-    SnipEntry EnsureBucket(List<SnipEntry> buckets, PartSO part)
-    {
-        foreach (var e in buckets) if (e.part == part) return e;
-        var ne = new SnipEntry(part, 0);
-        buckets.Add(ne);
-        return ne;
-    }
-
-    int TotalPicked(List<SnipEntry> buckets)
-    {
-        int t = 0; foreach (var e in buckets) t += Mathf.Max(0, e.remaining); return t;
-    }
-
-    // (Optional helpers you were using elsewhere)
-    public int GetSnipCount(SlotType slot) => TotalPicked(GetBuckets(slot));
-    public int GetTargetCount() => targetCount;
 }

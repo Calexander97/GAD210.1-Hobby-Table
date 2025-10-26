@@ -1,56 +1,36 @@
+// PaintPanelBuilder.cs (unchanged but ensure using UnityEngine.UI;)
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
 public class PaintPanelBuilder : MonoBehaviour
 {
-    public PhaseController phase;        // drag PhaseController
-    public HobbyDeskController desk;     // drag HobbyDeskController
-    public RectTransform swatchGrid;     // the grid object
-    public TMP_Text currentSlotText;     // current slot text
+    public PhaseController phase;
+    public HobbyDeskController desk;
+    public RectTransform swatchGrid;
+    public TMP_Text currentSlotText;
 
-    // basic palette
-    public Color[] palette = new Color[]
-    {
+    public Color[] palette = new Color[] {
         Color.white, Color.black, Color.gray,
-        new Color(0.8f,0.1f,0.1f),   // red
-        new Color(0.1f,0.6f,0.9f),   // blue
-        new Color(0.15f,0.7f,0.25f), // green
-        new Color(0.95f,0.65f,0.1f), // yellow
-        new Color(0.6f,0.3f,0.9f),   // purple
-        new Color(0.7f,0.4f,0.2f),   // brown
-        new Color(0.8f,0.8f,0.8f),   // light gray
-        new Color(0.4f,0.4f,0.4f),   // dark gray
-        new Color(0.9f,0.3f,0.3f)
+        new Color(0.8f,0.1f,0.1f), new Color(0.1f,0.6f,0.9f),
+        new Color(0.15f,0.7f,0.25f), new Color(0.95f,0.65f,0.1f),
+        new Color(0.6f,0.3f,0.9f), new Color(0.7f,0.4f,0.2f),
+        new Color(0.8f,0.8f,0.8f), new Color(0.4f,0.4f,0.4f), new Color(0.9f,0.3f,0.3f)
     };
 
-    void OnEnable()
-    {
-        BuildSwatches();
-        UpdateSlotLabel();
-    }
-
-    void Update()
-    {
-        if (currentSlotText) UpdateSlotLabel();
-    }
+    void OnEnable() { BuildSwatches(); UpdateSlotLabel(); }
+    void Update() { UpdateSlotLabel(); }
 
     void BuildSwatches()
     {
         foreach (Transform c in swatchGrid) Destroy(c.gameObject);
-
         foreach (var c in palette)
         {
             var go = new GameObject("Swatch", typeof(RectTransform), typeof(Image), typeof(Button));
             go.transform.SetParent(swatchGrid, false);
-            var img = go.GetComponent<Image>();
-            img.color = c;
-            var btn = go.GetComponent<Button>();
-            Color picked = c;
-            btn.onClick.AddListener(() =>
-            {
-                phase.OnColorPicked(picked);
-            });
+            go.GetComponent<Image>().color = c;
+            var picked = c;
+            go.GetComponent<Button>().onClick.AddListener(() => phase.OnColorPicked(picked));
         }
     }
 

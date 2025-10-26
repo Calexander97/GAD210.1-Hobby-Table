@@ -1,117 +1,45 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.EventSystems;
 
 public class HobbyDeskController : MonoBehaviour
 {
-    [Header("Data")]
+    [Header("Kit (optional lookup)")]
     public KitSO kit;
 
-    [Header("Anchors")]
-    public Transform headAnchor, bodyAnchor, weaponAnchor;
+    // =============== SLOT GRID ===============
+    [Header("Slot Grid")]
+    public Transform slotsParent;      // UnitSlots
+    public int maxUnits = 10;
+    public Transform[] slots;          // auto-filled from slotsParent
+    public GameObject unitRootPrefab;  // must contain HeadAnchor/BodyAnchor/WeaponAnchor
 
-    [Header("Camera Orbit")]
-    public Transform orbitTarget;
+    // =============== CAMERA ===============
+    [Header("Paint Camera Rig")]
+    public Transform orbitPivot;       // moves to the active unit
+    public Camera paintCamera;
     public float orbitSpeed = 120f, zoomSpeed = 5f, minDist = 2f, maxDist = 8f;
 
-    Dictionary<SlotType, GameObject> currentParts = new();
-    Dictionary<SlotType, string> currentIds = new();
-    Dictionary<SlotType, Color> currentCols = new() {
-        {SlotType.Head, Color.gray}, {SlotType.Body, Color.gray}, {SlotType.Weapon, Color.gray}
-    };
+    // =============== RUNTIME ===============
+    [Serializable]
+    public class UnitInstance
+    {
+        public Transform unitRoot;
+        public Transform headAnchor, bodyAnchor, weaponAnchor;
+        public string headId, bodyId, weaponId;
+        public Color headCol = Color.gray, bodyCol = Color.gray, weaponCol = Color.gray;
+    }
+
+    public List<UnitInstance> units = new();
+    public int paintIndex = 0;
+
+    // which sub-slot we’re painting (for the UI buttons)
     SlotType selectedSlot = SlotType.Body;
 
-    Camera cam;
-    void Awake() { cam = Camera.main; }
+    // ---------- Back-compat preview anchors for SNIP/GLUE ----------
+    Transform previewRoot, previewHead, previewBody, previewWeapon;
 
-    void Update()
-    {
-        HandleOrbit();
-        if (Input.GetMouseButtonDown(0) && !EventSystem.current.IsPointerOverGameObject())
-        {
-            TryPickSlotFromScene();
-        }
-    }
-
-    void HandleOrbit()
-    {
-        if (Input.GetMouseButton(1))
-        {
-            float dx = Input.GetAxis("Mouse X");
-            orbitTarget.Rotate(Vector3.up, dx * orbitSpeed * Time.deltaTime, Space.World);
-        }
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (Mathf.Abs(scroll) > 0.001f)
-        {
-            var dir = cam.transform.forward;
-            var newPos = cam.transform.position + dir * (scroll * zoomSpeed);
-            float dist = Vector3.Distance(newPos, orbitTarget.position);
-            if (dist > minDist && dist < maxDist) cam.transform.position = newPos;
-        }
-    }
-
-    void TryPickSlotFromScene()
-    {
-        var ray = cam.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out var hit, 100f))
-        {
-            var root = hit.collider.transform;
-            while (root.parent != null && root.parent != orbitTarget) root = root.parent;
-            if (root == headAnchor) selectedSlot = SlotType.Head;
-            else if (root == bodyAnchor) selectedSlot = SlotType.Body;
-            else if (root == weaponAnchor) selectedSlot = SlotType.Weapon;
-        }
-    }
-
-    public void SelectSlotHead() { selectedSlot = SlotType.Head; }
-    public void SelectSlotBody() { selectedSlot = SlotType.Body; }
-    public void SelectSlotWeapon() { selectedSlot = SlotType.Weapon; }
-
-    public void EquipPart(PartSO part)
-    {
-        var anchor = GetAnchor(part.slot);
-        if (currentParts.TryGetValue(part.slot, out var existing)) Destroy(existing);
-        var go = Instantiate(part.prefab, anchor);
-        go.transform.localPosition = Vector3.zero;
-        go.transform.localRotation = Quaternion.identity;
-        currentParts[part.slot] = go;
-        currentIds[part.slot] = part.id;
-        ApplyColorToObject(go, currentCols[part.slot]);
-    }
-
-    public void SetColor(Color c)
-    {
-        currentCols[selectedSlot] = c;
-        if (currentParts.TryGetValue(selectedSlot, out var go)) ApplyColorToObject(go, c);
-    }
-
-    void ApplyColorToObject(GameObject go, Color c)
-    {
-        foreach (var r in go.GetComponentsInChildren<Renderer>())
-        {
-            var mpb = new MaterialPropertyBlock();
-            r.GetPropertyBlock(mpb);
-            mpb.SetColor("_Color", c);   // Standard/URP Lit default color
-            r.SetPropertyBlock(mpb);
-        }
-    }
-
-    public SlotType GetCurrentSlot() => selectedSlot;
-    public bool HasAllPartsEquipped() =>
-        currentParts.ContainsKey(SlotType.Head) &&
-        currentParts.ContainsKey(SlotType.Body) &&
-        currentParts.ContainsKey(SlotType.Weapon);
-
-    Transform GetAnchor(SlotType t) => t switch
-    {
-        SlotType.Head => headAnchor,
-        SlotType.Body => bodyAnchor,
-        SlotType.Weapon => weaponAnchor,
-        _ => bodyAnchor
-    };
-
-    // ----- Save/Load (simple) -----
+    // ---------- Simple save types (back-compat) ----------
     [Serializable]
     public class UnitSave
     {
@@ -119,50 +47,233 @@ public class HobbyDeskController : MonoBehaviour
         public Color headCol, bodyCol, weaponCol;
     }
     [Serializable] public class SaveList { public List<UnitSave> items = new(); }
-    const string SAVE_KEY = "Hobby_Collection";
-    SaveList cache;
 
-    public void SaveCurrentToCollection()
+    Camera cam;
+
+    void Awake()
     {
-        var u = new UnitSave
+        cam = paintCamera ? paintCamera : Camera.main;
+
+        if (slotsParent && (slots == null || slots.Length == 0))
         {
-            headId = currentIds.GetValueOrDefault(SlotType.Head),
-            bodyId = currentIds.GetValueOrDefault(SlotType.Body),
-            weaponId = currentIds.GetValueOrDefault(SlotType.Weapon),
-            headCol = currentCols[SlotType.Head],
-            bodyCol = currentCols[SlotType.Body],
-            weaponCol = currentCols[SlotType.Weapon]
-        };
-        var list = LoadAll();
-        list.items.Add(u);
-        PlayerPrefs.SetString(SAVE_KEY, JsonUtility.ToJson(list));
-        PlayerPrefs.Save();
-    }
-    public SaveList LoadAll()
-    {
-        if (cache != null) return cache;
-        cache = PlayerPrefs.HasKey(SAVE_KEY)
-            ? JsonUtility.FromJson<SaveList>(PlayerPrefs.GetString(SAVE_KEY))
-            : new SaveList();
-        return cache;
+            int n = Mathf.Min(maxUnits, slotsParent.childCount);
+            slots = new Transform[n];
+            for (int i = 0; i < n; i++) slots[i] = slotsParent.GetChild(i);
+        }
     }
 
-    public PartSO FindPartById(string id)
+    void Update() { HandleOrbit(); }
+
+    // --------- ORBIT (camera only; units never rotate) ----------
+    void HandleOrbit()
     {
-        foreach (var p in kit.heads) if (p.id == id) return p;
-        foreach (var p in kit.bodies) if (p.id == id) return p;
-        foreach (var p in kit.weapons) if (p.id == id) return p;
+        if (!orbitPivot || !cam) return;
+
+        if (Input.GetMouseButton(1))
+        {
+            float dx = Input.GetAxis("Mouse X");
+            float dy = Input.GetAxis("Mouse Y");
+            cam.transform.RotateAround(orbitPivot.position, Vector3.up, dx * orbitSpeed * Time.deltaTime);
+            cam.transform.RotateAround(orbitPivot.position, cam.transform.right, -dy * orbitSpeed * Time.deltaTime);
+        }
+
+        float scroll = Input.GetAxis("Mouse ScrollWheel");
+        if (Mathf.Abs(scroll) > 0.001f)
+        {
+            Vector3 dir = (cam.transform.position - orbitPivot.position).normalized;
+            float dist = Vector3.Distance(cam.transform.position, orbitPivot.position);
+            float target = Mathf.Clamp(dist - scroll * zoomSpeed, minDist, maxDist);
+            cam.transform.position = orbitPivot.position + dir * target;
+            cam.transform.LookAt(orbitPivot.position);
+        }
+    }
+
+    // =================== NEW API (multi-unit) ===================
+
+    public Transform GetFreeSlot()
+    {
+        if (slots == null) return null;
+        foreach (var s in slots)
+        {
+            if (s == null) continue;
+            if (s.childCount == 0) return s;
+        }
         return null;
     }
-    public void SpawnFromSave(UnitSave u)
+
+    public UnitInstance CreateEmptyUnitAt(Transform slot)
     {
-        if (!string.IsNullOrEmpty(u.headId)) EquipPart(FindPartById(u.headId));
-        if (!string.IsNullOrEmpty(u.bodyId)) EquipPart(FindPartById(u.bodyId));
-        if (!string.IsNullOrEmpty(u.weaponId)) EquipPart(FindPartById(u.weaponId));
-        // Reapply colors
-        currentCols[SlotType.Head] = u.headCol;
-        currentCols[SlotType.Body] = u.bodyCol;
-        currentCols[SlotType.Weapon] = u.weaponCol;
-        SetColor(u.bodyCol);
+        if (slot == null || unitRootPrefab == null) return null;
+
+        var root = Instantiate(unitRootPrefab, slot);
+        root.transform.localPosition = Vector3.zero;
+        root.transform.localRotation = Quaternion.identity;
+
+        var u = new UnitInstance
+        {
+            unitRoot = root.transform,
+            headAnchor = root.transform.Find("HeadAnchor"),
+            bodyAnchor = root.transform.Find("BodyAnchor"),
+            weaponAnchor = root.transform.Find("WeaponAnchor")
+        };
+
+        units.Add(u);
+        return u;
+    }
+
+    public void BuildUnit(UnitInstance u, PartSO head, PartSO body, PartSO weapon)
+    {
+        if (u == null) return;
+
+        void Spawn(Transform anchor, PartSO p, ref string idStore, ref Color colStore)
+        {
+            if (!anchor || p == null || p.prefab == null) return;
+            foreach (Transform c in anchor) Destroy(c.gameObject);
+            var go = Instantiate(p.prefab, anchor);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+            ApplyColorToObject(go, colStore);
+            idStore = p.id;
+        }
+
+        Spawn(u.headAnchor, head, ref u.headId, ref u.headCol);
+        Spawn(u.bodyAnchor, body, ref u.bodyId, ref u.bodyCol);
+        Spawn(u.weaponAnchor, weapon, ref u.weaponId, ref u.weaponCol);
+    }
+
+    public void SelectPaintIndex(int i)
+    {
+        if (units.Count == 0) return;
+        paintIndex = Mathf.Clamp(i, 0, units.Count - 1);
+
+        if (orbitPivot && cam)
+        {
+            orbitPivot.position = units[paintIndex].unitRoot.position;
+            float dist = Mathf.Clamp(Vector3.Distance(cam.transform.position, orbitPivot.position), minDist * 1.2f, maxDist * 0.8f);
+            Vector3 dir = (cam.transform.position - orbitPivot.position).normalized;
+            if (dir.sqrMagnitude < 0.001f) dir = new Vector3(0, 0.5f, 1).normalized;
+            cam.transform.position = orbitPivot.position + dir * dist;
+            cam.transform.LookAt(orbitPivot.position);
+        }
+    }
+
+    public void PaintCurrentSlot(SlotType slot, Color c)
+    {
+        if (units.Count == 0) return;
+        var u = units[paintIndex];
+
+        Transform a = slot switch
+        {
+            SlotType.Head => u.headAnchor,
+            SlotType.Body => u.bodyAnchor,
+            SlotType.Weapon => u.weaponAnchor,
+            _ => u.bodyAnchor
+        };
+
+        foreach (var r in a.GetComponentsInChildren<Renderer>())
+        {
+            var mpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(mpb);
+            mpb.SetColor("_Color", c);
+            r.SetPropertyBlock(mpb);
+        }
+
+        if (slot == SlotType.Head) u.headCol = c;
+        else if (slot == SlotType.Body) u.bodyCol = c;
+        else if (slot == SlotType.Weapon) u.weaponCol = c;
+    }
+
+    // UI hooks to set which sub-slot we’re painting
+    public void SelectSlotHead() => selectedSlot = SlotType.Head;
+    public void SelectSlotBody() => selectedSlot = SlotType.Body;
+    public void SelectSlotWeapon() => selectedSlot = SlotType.Weapon;
+    public SlotType GetCurrentSlot() => selectedSlot;
+
+    // Keeps PaintPanelBuilder + PhaseController happy
+    public void SetColor(Color c) => PaintCurrentSlot(selectedSlot, c);
+
+    // =================== BACK-COMPAT SHIMS ===================
+
+    // old preview path (used by PhaseController during SNIP/GLUE)
+    public void EquipPart(PartSO part)
+    {
+        if (part == null || part.prefab == null) return;
+
+        EnsurePreviewRoot();
+
+        Transform anchor = part.slot switch
+        {
+            SlotType.Head => previewHead,
+            SlotType.Body => previewBody,
+            SlotType.Weapon => previewWeapon,
+            _ => previewBody
+        };
+
+        foreach (Transform c in anchor) Destroy(c.gameObject);
+        var go = Instantiate(part.prefab, anchor);
+        go.transform.localPosition = Vector3.zero;
+        go.transform.localRotation = Quaternion.identity;
+        // default preview color
+        ApplyColorToObject(go, Color.gray);
+    }
+
+    // lookup used by FinalDisplay/older save code
+    public PartSO FindPartById(string id)
+    {
+        if (string.IsNullOrEmpty(id) || kit == null) return null;
+        foreach (var p in kit.heads) if (p && p.id == id) return p;
+        foreach (var p in kit.bodies) if (p && p.id == id) return p;
+        foreach (var p in kit.weapons) if (p && p.id == id) return p;
+        return null;
+    }
+
+    // color getter used by PhaseController when persisting
+    public Color GetColorFor(SlotType slot)
+    {
+        if (units.Count > 0)
+        {
+            var u = units[Mathf.Clamp(paintIndex, 0, units.Count - 1)];
+            if (slot == SlotType.Head) return u.headCol;
+            if (slot == SlotType.Body) return u.bodyCol;
+            if (slot == SlotType.Weapon) return u.weaponCol;
+        }
+        // fallback
+        return slot switch
+        {
+            SlotType.Head => Color.gray,
+            SlotType.Body => Color.gray,
+            SlotType.Weapon => Color.gray,
+            _ => Color.gray
+        };
+    }
+
+    // =================== helpers ===================
+    static void ApplyColorToObject(GameObject go, Color c)
+    {
+        foreach (var r in go.GetComponentsInChildren<Renderer>())
+        {
+            var mpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(mpb);
+            mpb.SetColor("_Color", c);
+            r.SetPropertyBlock(mpb);
+        }
+    }
+
+    void EnsurePreviewRoot()
+    {
+        if (previewRoot) return;
+
+        previewRoot = new GameObject("PreviewRoot").transform;
+        // put it somewhere unobtrusive near the pivot (or at origin)
+        previewRoot.position = orbitPivot ? orbitPivot.position + new Vector3(-1.5f, 0f, 0f) : Vector3.zero;
+
+        previewHead = new GameObject("HeadAnchor").transform; previewHead.SetParent(previewRoot, false);
+        previewBody = new GameObject("BodyAnchor").transform; previewBody.SetParent(previewRoot, false);
+        previewWeapon = new GameObject("WeaponAnchor").transform; previewWeapon.SetParent(previewRoot, false);
+
+        // simple offsets so preview parts don’t overlap
+        previewBody.localPosition = Vector3.zero;
+        previewHead.localPosition = new Vector3(0f, 1.1f, 0f);
+        previewWeapon.localPosition = new Vector3(0.35f, 0.6f, 0f);
     }
 }
