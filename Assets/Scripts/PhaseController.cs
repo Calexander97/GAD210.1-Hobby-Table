@@ -30,6 +30,9 @@ public class PhaseController : MonoBehaviour
     public KitSO activeKit { get; private set; }
     public Phase phase { get; private set; } = Phase.Snip;
 
+    public PaintCameraOrbit paintCamOrbit;   // assign in Inspector
+    public Transform paintOrbitPivot;        // empty transform used by PaintCameraOrbit
+
     // ----- SNIP data (counts per option) -----
     [Serializable]
     public class SnipEntry { public PartSO part; public int remaining; public SnipEntry(PartSO p) { part = p; remaining = 1; } }
@@ -121,23 +124,26 @@ public class PhaseController : MonoBehaviour
         if (snipPanel) snipPanel.SetActive(p == Phase.Snip);
         if (gluePanel) gluePanel.SetActive(p == Phase.Glue);
         if (paintPanel) paintPanel.SetActive(p == Phase.Paint);
-        if (phaseText) phaseText.text = $"Phase: {p}";
 
-        if (p == Phase.Glue)
+        if (p == Phase.Paint)
         {
-            // clamp indices to lists
-            ClampGlueIndices();
-            assembledCount = 0;
-            UpdateGlueLabels();
-            UpdateAssembleUI();
+            // first unit
+            desk.FocusPaintUnit(0, paintOrbitPivot);
+            if (paintCamOrbit) paintCamOrbit.pivot = paintOrbitPivot;
         }
-        else if (p == Phase.Paint)
-        {
-            paintedAny = false;
-            if (desk.units.Count > 0) desk.SelectPaintIndex(0);
-        }
-
         UpdateButtons();
+    }
+
+    // Hook these to your Paint UI "Prev"/"Next" unit buttons:
+    public void PaintPrevUnit()
+    {
+        int idx = desk.NextPaintIndex(-1);
+        desk.FocusPaintUnit(idx, paintOrbitPivot);
+    }
+    public void PaintNextUnit()
+    {
+        int idx = desk.NextPaintIndex(+1);
+        desk.FocusPaintUnit(idx, paintOrbitPivot);
     }
 
     void UpdateButtons()

@@ -276,4 +276,38 @@ public class HobbyDeskController : MonoBehaviour
         previewHead.localPosition = new Vector3(0f, 1.1f, 0f);
         previewWeapon.localPosition = new Vector3(0.35f, 0.6f, 0f);
     }
+
+    // --- In HobbyDeskController ---
+
+    // Call this from PhaseController when entering Paint or when clicking Next/Prev.
+    public void FocusPaintUnit(int index, Transform orbitPivot)
+    {
+        if (index < 0 || index >= units.Count) return;
+        paintIndex = index;
+
+        // Find a sensible center for the unit (bounds of all renderers)
+        Vector3 c = GetUnitBoundsCenter(units[index].unitRoot);
+        orbitPivot.position = c;
+    }
+
+    // Utility: compute center of all renderers under root
+    Vector3 GetUnitBoundsCenter(Transform root)
+    {
+        var rends = root.GetComponentsInChildren<Renderer>();
+        if (rends.Length == 0) return root.position;
+
+        Bounds b = rends[0].bounds;
+        for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+        return b.center;
+    }
+
+    // Optional: helpers for Next/Prev in Paint
+    public int GetUnitCount() => units.Count;
+    public int NextPaintIndex(int delta)
+    {
+        if (units.Count == 0) return 0;
+        paintIndex = (paintIndex + delta + units.Count) % units.Count;
+        return paintIndex;
+    }
+
 }
