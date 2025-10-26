@@ -55,6 +55,10 @@ public class PhaseController : MonoBehaviour
         targetCount = Mathf.Max(1, kit ? kit.unitCount : 1);
         ResetToSnip();                 // ensure lists/labels reset
         Log($"Kit set: {kit?.kitName} (need {targetCount} of each).");
+        assembledCount = 0;
+        headIndex = bodyIndex = weaponIndex = 0;
+        UpdateAssembleUI();
+
     }
 
     // PUBLIC so old callers compile
@@ -126,6 +130,18 @@ public class PhaseController : MonoBehaviour
         if (gluePanel) gluePanel.SetActive(p == Phase.Glue);
         if (paintPanel) paintPanel.SetActive(p == Phase.Paint);
         if (phaseText) phaseText.text = $"Phase: {p}";
+
+        if (p == Phase.Glue)
+        {
+            // Reset GLUE state when entering
+            headIndex = Mathf.Clamp(headIndex, 0, Mathf.Max(0, _snipHeads.Count - 1));
+            bodyIndex = Mathf.Clamp(bodyIndex, 0, Mathf.Max(0, _snipBodies.Count - 1));
+            weaponIndex = Mathf.Clamp(weaponIndex, 0, Mathf.Max(0, _snipWeapons.Count - 1));
+            assembledCount = 0;            // fresh assembly run for this kit
+            UpdateGlueLabels();
+            UpdateAssembleUI();
+        }
+
         UpdateButtons();
     }
 
@@ -142,8 +158,10 @@ public class PhaseController : MonoBehaviour
         }
         else if (phase == Phase.Glue)
         {
-            canNext = desk != null && desk.HasAllPartsEquipped();
+            bool haveAll = assembledCount >= targetCount && targetCount > 0;
+            canNext = haveAll;
         }
+
         else if (phase == Phase.Paint)
         {
             canNext = paintedAny;
@@ -168,6 +186,11 @@ public class PhaseController : MonoBehaviour
         if (weaponNeedText) weaponNeedText.text = $"Weapon {_snipWeapons.Count}/{targetCount}";
     }
 
+    // ---- GLUE state ----
+    int headIndex = 0, bodyIndex = 0, weaponIndex = 0; // which snipped option is previewed
+    int assembledCount = 0;                             // how many units assembled so far
+
+
     List<PartSO> GetSnipList(SlotType slot) => slot switch
     {
         SlotType.Head => _snipHeads,
@@ -185,4 +208,63 @@ public class PhaseController : MonoBehaviour
     // read-only accessors (for other systems if needed)
     public int GetSnipCount(SlotType slot) => GetSnipList(slot).Count;
     public int GetTargetCount() => targetCount;
+
+    void UpdateGlueLabels()
+    {
+        // Show the currently previewed choices (from the SNIP lists)
+        if (currentHeadOption && _snipHeads.Count > 0)
+            currentHeadOption.text = NiceName(_snipHeads[headIndex]);
+        if (currentBodyOption && _snipBodies.Count > 0)
+            currentBodyOption.text = NiceName(_snipBodies[bodyIndex]);
+        if (currentWeaponOption && _snipWeapons.Count > 0)
+            currentWeaponOption.text = NiceName(_snipWeapons[weaponIndex]);
+
+        if (desk)
+        {
+            // also preview the combo on the rig
+            if (_snipHeads.Count > 0) desk.EquipPart(_snipHeads[headIndex]);
+            if (_snipBodies.Count > 0) desk.EquipPart(_snipBodies[bodyIndex]);
+            if (_snipWeapons.Count > 0) desk.EquipPart(_snipWeapons[weaponIndex]);
+        }
+    }
+
+    string NiceName(PartSO p) =>
+        string.IsNullOrEmpty(p.displayName) ? p.name : p.displayName;
+
+    void UpdateAssembleUI()
+    {
+        if (assembleProgressText && activeKit)
+            assembleProgressText.text = $"Assembled: {assembledCount}/{targetCount}";
+    }
+
+    public void CycleHead(int dir)
+    {
+        if (_snipHeads.Count == 0) return;
+        headIndex = (headIndex + dir + _snipHeads.Count) % _snipHeads.Count;
+        UpdateGlueLabels();
+    }
+    public void CycleBody(int dir)
+    {
+        if (_snipBodies.Count == 0) return;
+        bodyIndex = (bodyIndex + dir + _snipBodies.Count) % _snipBodies.Count;
+        UpdateGlueLabels();
+    }
+    public void CycleWeapon(int dir)
+    {
+        if (_snipWeapons.Count == 0) return;
+        weaponIndex = (weaponIndex + dir + _snipWeapons.Count) % _snipWeapons.Count;
+        UpdateGlueLabels();
+    }
+
+    public void OnAssembleClicked()
+    {
+        if (phase != Phase.Glue || activeKit == null) return;
+
+        // (POC) Count one completed unit using the currently previewed combo.
+        assembledCount = Mathf.Clamp(assembledCount + 1, 0, targetCount);
+
+        UpdateAssembleUI();
+        UpdateButtons();
+    }
+
 }
